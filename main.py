@@ -1,97 +1,140 @@
-import os, threading, re, requests, time
+import os, threading, re
 from flask import Flask
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import yt_dlp
 
 TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
-# Ye 409 error fix karega
-try:
-    bot.remove_webhook()
-    time.sleep(1)
-    bot.delete_webhook(drop_pending_updates=True)
-except: pass
-
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Bot Fixed & Running"
-@app.route('/ping')
-def ping(): return "alive", 200
+def home(): return "Premium Bot Live"
 def run_flask(): app.run(host='0.0.0.0', port=8080)
 
-def get_insta_info(username):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15",
-        "X-IG-App-ID": "936619743392459"
-    }
-    url = f"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}"
-    r = requests.get(url, headers=headers, timeout=15)
-    if r.status_code!= 200:
-        raise Exception(f"Status {r.status_code}")
-    data = r.json()['data']['user']
-    return data
+# Store url temporary
+user_data = {}
+
+def get_buttons(url_id):
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("🎬 Best Quality", callback_data=f"best|{url_id}"),
+        InlineKeyboardButton("🎥 1080p HD", callback_data=f"1080|{url_id}"),
+        InlineKeyboardButton("📱 720p HD", callback_data=f"720|{url_id}"),
+        InlineKeyboardButton("📀 480p", callback_data=f"480|{url_id}"),
+        InlineKeyboardButton("🎵 MP3 Audio", callback_data=f"mp3|{url_id}"),
+        InlineKeyboardButton("🔊 M4A Audio", callback_data=f"m4a|{url_id}"),
+    )
+    return markup
 
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.send_message(m.chat.id, "✨ **Pro Bot Fixed** ✨\nUsername bhejo ex: `virat.kohli`", parse_mode="Markdown")
+    bot.send_message(m.chat.id,
+    "╭─「 **PREMIUM DOWNLOADER** 」─\n"
+    "│\n"
+    "├ 🔥 YouTube / Insta / FB / TikTok\n"
+    "├ 🎬 Quality Select Option\n"
+    "├ 🎵 MP3 / Audio Support\n"
+    "│\n"
+    "╰─ Bas Link Bhejo 👇",
+    parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: True)
-def get_info(m):
-    username = m.text.replace('/insta','').replace('@','').replace('/','').strip().split()[0].lower()
-    if len(username) < 2: return
+def handle_link(m):
+    url = m.text.strip()
+    if not url.startswith("http"):
+        return bot.reply_to(m, "❌ Link bhejo bhai!")
+
+    load = bot.reply_to(m, "🔍 **Fetching details...**", parse_mode="Markdown")
+
     try:
-        load = bot.send_message(m.chat.id, f"🔍 Fetching `@{username}`...", parse_mode="Markdown")
+        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title','Unknown Title')[:70]
+            thumb = info.get('thumbnail')
+            duration = info.get('duration', 0)
+            views = info.get('view_count', 0)
 
-        p = get_insta_info(username)
+        user_data[str(m.chat.id)] = url
 
-        bio = p.get('biography') or 'No bio'
-        email_regex = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
-        emails = re.findall(email_regex, bio)
-        email_found = emails[0] if emails else 'Not Found'
-
-        text = f"""
-╭─「 **INSTAGRAM PROFILE** 」─
-│
-├ 👤 **Name:** {p.get('full_name')}
-├ 🔗 **Username:** @{p.get('username')}
-├ 🆔 **ID:** `{p.get('id')}`
-│
-├─「 **BIO** 」
-│ {bio}
-│
-├─「 **STATS** 」
-├ 👥 Followers: `{p.get('edge_followed_by',{}).get('count',0):,}`
-├ 👤 Following: `{p.get('edge_follow',{}).get('count',0):,}`
-├ 📸 Posts: `{p.get('edge_owner_to_timeline_media',{}).get('count',0)}`
-│
-├─「 **INFO** 」
-├ 🔒 Private: {'Yes' if p.get('is_private') else 'No'}
-├ ✅ Verified: {'Yes' if p.get('is_verified') else 'No'}
-├ 📧 Email in Bio: {email_found}
-├ 🔗 Link: {p.get('bio_links')[0]['url'] if p.get('bio_links') else 'None'}
-│
-╰─ **https://instagram.com/{username}**
-"""
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔗 Open Profile", url=f"https://instagram.com/{username}"))
+        caption = (
+            f"╭─「 **VIDEO FOUND** 」─\n"
+            f"│\n"
+            f"├ 🎬 **Title:** {title}\n"
+            f"├ ⏱️ **Duration:** {duration//60}:{duration%60:02d} min\n"
+            f"├ 👁️ **Views:** {views:,}\n"
+            f"│\n"
+            f"╰─ **Quality Select Karo 👇**"
+        )
 
         bot.delete_message(m.chat.id, load.message_id)
-        bot.send_photo(m.chat.id, p.get('profile_pic_url_hd'), caption=text, parse_mode="Markdown", reply_markup=markup)
+        if thumb:
+            bot.send_photo(m.chat.id, thumb, caption=caption, parse_mode="Markdown", reply_markup=get_buttons(str(m.chat.id)))
+        else:
+            bot.send_message(m.chat.id, caption, parse_mode="Markdown", reply_markup=get_buttons(str(m.chat.id)))
+
+    except Exception as e:
+        bot.edit_message_text(f"❌ Link support nahi hai ya private hai.\nYouTube link try kar.", m.chat.id, load.message_id)
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
+    try:
+        quality, chat_id_key = call.data.split("|")
+        url = user_data.get(chat_id_key)
+        if not url:
+            return bot.answer_callback_query(call.id, "❌ Link expire ho gaya, dobara bhejo!")
+
+        bot.edit_message_caption(f"⏳ **Downloading {quality.upper()}...**\n\nThoda wait karo, premium quality me bhej raha hu...", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+        # Format select
+        if quality == "best":
+            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        elif quality == "1080":
+            fmt = "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]"
+        elif quality == "720":
+            fmt = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]"
+        elif quality == "480":
+            fmt = "best[height<=480][ext=mp4]/best[height<=480]"
+        elif quality == "mp3":
+            fmt = "bestaudio/best"
+            # will convert to mp3 via postprocessor
+        else:
+            fmt = "bestaudio[ext=m4a]/bestaudio"
+
+        ydl_opts = {
+            'format': fmt,
+            'outtmpl': f'/tmp/{chat_id_key}_%(id)s.%(ext)s',
+            'quiet': True,
+        }
+        if quality == "mp3":
+            ydl_opts.update({
+                'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
+            })
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info)
+            # fix for mp3 extension
+            if quality == "mp3":
+                file_path = file_path.rsplit(".",1)[0] + ".mp3"
+
+            final_caption = f"✅ **{info.get('title','')[:80]}**\n\n╰─ Quality: {quality.upper()} | @YourBotName"
+
+            with open(file_path, 'rb') as f:
+                if quality in ["mp3","m4a"]:
+                    bot.send_audio(call.message.chat.id, f, caption=final_caption, parse_mode="Markdown")
+                else:
+                    bot.send_video(call.message.chat.id, f, caption=final_caption, parse_mode="Markdown", supports_streaming=True)
+
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        bot.delete_message(call.message.chat.id, call.message.message_id)
 
     except Exception as e:
         print(e)
-        try: bot.delete_message(m.chat.id, load.message_id)
-        except: pass
-        bot.send_message(m.chat.id, f"❌ `@{username}` nahi mila ya Instagram ne block kiya.\nDusra username try kar.", parse_mode="Markdown")
+        bot.send_message(call.message.chat.id, f"❌ Download fail: {str(e)[:150]}")
 
 threading.Thread(target=run_flask, daemon=True).start()
-
-if __name__ == "__main__":
-    # infinity_polling ki jagah ye use kar - conflict khatam
-    while True:
-        try:
-            bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
-        except Exception as e:
-            print(f"Polling error: {e}")
-            time.sleep(5)
+bot.infinity_polling(skip_pending=True)
