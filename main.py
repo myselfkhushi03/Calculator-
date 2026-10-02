@@ -24,9 +24,9 @@ def save(f,d): json.dump(d, open(f,"w"), indent=2)
 def get_settings():
     s=load(SETTINGS_FILE)
     if not s:
-        s={"name":"Khushi","insta":"https://www.instagram.com/_khushi..1432__?igsh=MTU2b3c0d3R4eW90","code":"6118588149","font":"normal","welcome":"Hey {user} ✨\n\nWelcome to {name}'s private vault 💌\n______________________________\n\nI'm {name}, so glad you're here!\n\nYou've found my exclusive collection 📸\nJust one step to unlock.\n\n👤 Your Name: {user}\n🆔 Your ID: {id}\n\n🔐 Send the secret code to unlock"}
+        s={"name":"Khushi","insta":"https://www.instagram.com/myselfkhushi03","code":"6118588149","font":"normal","timer":0,"group":True,"welcome":"Hey {user} ✨\n\nWelcome to {name}'s private vault 💌\n______________________________\n\nI'm {name}, so glad you're here!\n\nYou've found my exclusive collection 📸\nJust one step to unlock.\n\n👤 Your Name: {user}\n🆔 Your ID: {id}\n\n🔐 Send the secret code to unlock"}
         save(SETTINGS_FILE,s)
-    if "font" not in s: s["font"]="normal"
+    s.setdefault("font","normal"); s.setdefault("timer",0); s.setdefault("group",True)
     return s
 
 SMALL_MAP = {
@@ -34,8 +34,7 @@ SMALL_MAP = {
     'a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'ǫ','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ',
 }
 def apply_font(text, font_type):
-    if font_type=="small":
-        return "".join(SMALL_MAP.get(c,c) for c in text)
+    if font_type=="small": return "".join(SMALL_MAP.get(c,c) for c in text)
     return text
 
 def get_photos(): return [os.path.join(PHOTO_FOLDER,x) for x in os.listdir(PHOTO_FOLDER) if x.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
@@ -58,6 +57,28 @@ def parse_time(t):
         if unit=="d": return time.time()+num*86400
     except: return None
 
+def parse_timer_str(s):
+    # 1m, 5m, 30s, 1h, 2d, 0
+    s=s.lower().strip()
+    if s=="0" or s=="off": return 0
+    try:
+        if s[-1]=="s": return max(1, int(s[:-1])) # seconds
+        if s[-1]=="m": return int(s[:-1])*60
+        if s[-1]=="h": return int(s[:-1])*3600
+        if s[-1]=="d": return int(s[:-1])*86400
+        return int(s)*60 # sirf number likha to minute samjho
+    except: return None
+
+def format_timer(sec):
+    if sec<60: return f"{sec}s"
+    if sec<3600: return f"{sec//60}m"
+    if sec<86400: return f"{sec//3600}h"
+    return f"{sec//86400}d"
+
+async def delete_job(context: ContextTypes.DEFAULT_TYPE):
+    try: await context.bot.delete_message(chat_id=context.job.chat_id, message_id=context.job.data)
+    except: pass
+
 async def setup_commands(app: Application):
     await app.bot.set_my_commands([BotCommand("start", "Start the bot")], scope=BotCommandScopeDefault())
     if ADMIN_ID!=0:
@@ -67,159 +88,171 @@ async def setup_commands(app: Application):
             BotCommand("setcode", "Change secret code"),
             BotCommand("setinsta", "Change insta link"),
             BotCommand("setfont", "Change font: normal / small"),
-            BotCommand("add", "Add photo (reply to photo)"),
+            BotCommand("settimer", "Timer: /settimer 1m / 5m / 1h / 0=off"),
+            BotCommand("add", "Add: /add or /add 1m / 5m"),
+            BotCommand("group", "Group on/off"),
             BotCommand("status", "Check status"),
-            BotCommand("ban", "Ban user: /ban ID 1d/2d/perm"),
+            BotCommand("ban", "Ban user"),
             BotCommand("unban", "Unban user"),
-            BotCommand("broadcast", "Send to all or one ID"),
+            BotCommand("broadcast", "Send all or ID"),
         ]
         await app.bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s=get_settings()
+    if update.effective_chat.type in ["group","supergroup"] and not s.get("group",True): return
     if is_banned(update.effective_user.id): return
-    s=get_settings(); uid=str(update.effective_user.id)
+    uid=str(update.effective_user.id)
     users=load(USERS_FILE)
     if uid not in users:
         users[uid]={"name":update.effective_user.first_name}; save(USERS_FILE,users)
     welcome_raw = s["welcome"].replace("{user}", update.effective_user.first_name).replace("{name}", s["name"]).replace("{id}", str(uid))
     welcome = apply_font(welcome_raw, s.get("font","normal"))
     btn = [[InlineKeyboardButton(f"📷 Follow {s['name']}", url=s["insta"])]]
-    await update.message.reply_text(welcome, reply_markup=InlineKeyboardMarkup(btn))
+    await update.message.reply_text(welcome, reply_markup=InlineKeyboardMarkup(btn), protect_content=True)
 
 async def check_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s=get_settings()
+    if update.effective_chat.type in ["group","supergroup"] and not s.get("group",True): return
     if is_banned(update.effective_user.id): return
-    s=get_settings(); txt=update.message.text.strip()
+    txt=update.message.text.strip()
     if txt==s["code"]:
         all_photos=get_photos()
         if not all_photos:
-            await update.message.reply_text("No photos yet"); return
+            await update.message.reply_text("No photos yet", protect_content=True); return
         to_send = random.sample(all_photos, min(2, len(all_photos)))
-        await update.message.reply_text(f"Yayy! Access granted ✅\nSending from {s['name']}...")
+        timer_sec = s.get("timer",0)
+        msg = await update.message.reply_text(f"Yayy! Access granted ✅", protect_content=True)
+        if timer_sec>0:
+            context.job_queue.run_once(delete_job, timer_sec, chat_id=update.effective_chat.id, data=msg.message_id)
         for i, p in enumerate(to_send, 1):
             cap_raw = f"For you, {update.effective_user.first_name} 💖 • {i}/{len(to_send)}\nFrom: {s['name']} ✨"
             cap = apply_font(cap_raw, s.get("font","normal"))
             btn = [[InlineKeyboardButton(f"📷 Follow {s['name']}", url=s["insta"])]]
-            await update.message.reply_photo(open(p,"rb"), caption=cap, reply_markup=InlineKeyboardMarkup(btn))
+            sent = await update.message.reply_photo(open(p,"rb"), caption=cap, reply_markup=InlineKeyboardMarkup(btn), protect_content=True)
+            if timer_sec>0:
+                context.job_queue.run_once(delete_job, timer_sec, chat_id=update.effective_chat.id, data=sent.message_id)
+        if timer_sec>0:
+            await update.message.reply_text(f"⏳ Photos auto delete in {format_timer(timer_sec)}", protect_content=True)
     elif txt.isdigit() and len(txt)>=4:
-        await update.message.reply_text("Oops! Wrong code 🥺")
+        await update.message.reply_text("Oops! Wrong code 😑", protect_content=True)
 
 async def set_name(update, context):
     if update.effective_user.id!=ADMIN_ID: return
-    if not context.args:
-        await update.message.reply_text("📝 **SetName**\nUse: `/setname YourName`\nEx: `/setname Khushi`", parse_mode="Markdown")
-        return
+    if not context.args: await update.message.reply_text("Use: /setname Khushi", parse_mode="Markdown"); return
     s=get_settings(); s["name"]=" ".join(context.args); save(SETTINGS_FILE,s)
     await update.message.reply_text(f"✅ Name -> {s['name']}")
 
 async def set_code(update, context):
     if update.effective_user.id!=ADMIN_ID: return
-    if not context.args:
-        await update.message.reply_text("🔐 **SetCode**\nUse: `/setcode 1234`\nEx: `/setcode 6118588149`", parse_mode="Markdown")
-        return
+    if not context.args: await update.message.reply_text("Use: /setcode 1234", parse_mode="Markdown"); return
     s=get_settings(); s["code"]=context.args[0]; save(SETTINGS_FILE,s)
     await update.message.reply_text(f"✅ Code -> {s['code']}")
 
 async def set_insta(update, context):
     if update.effective_user.id!=ADMIN_ID: return
-    if not context.args:
-        await update.message.reply_text("📷 **SetInsta**\nUse: `/setinsta LINK`\nEx: `/setinsta https://instagram.com/_khushi..1432__`", parse_mode="Markdown")
-        return
+    if not context.args: await update.message.reply_text("Use: /setinsta LINK", parse_mode="Markdown"); return
     s=get_settings(); s["insta"]=context.args[0]; save(SETTINGS_FILE,s)
     await update.message.reply_text("✅ Insta updated")
 
 async def set_font(update, context):
     if update.effective_user.id!=ADMIN_ID: return
-    if not context.args:
-        await update.message.reply_text("🔤 **SetFont**\nUse:\n`/setfont normal`\n`/setfont small` (ᴄʜɪᴋᴜᴜ wala)", parse_mode="Markdown")
-        return
+    if not context.args: await update.message.reply_text("Use: /setfont normal or /setfont small", parse_mode="Markdown"); return
     font = context.args[0].lower()
-    if font not in ["normal","small"]:
-        await update.message.reply_text("Use: normal / small"); return
+    if font not in ["normal","small"]: await update.message.reply_text("Use: normal / small"); return
     s=get_settings(); s["font"]=font; save(SETTINGS_FILE,s)
-    await update.message.reply_text(f"✅ Font -> {font} Demo: {apply_font('Khushi Welcome', font)}")
+    await update.message.reply_text(f"✅ Font -> {font}")
+
+async def set_timer(update, context):
+    if update.effective_user.id!=ADMIN_ID: return
+    if not context.args:
+        await update.message.reply_text("⏱️ Use:\n`/settimer 1m` - 1 min\n`/settimer 5m` - 5 min\n`/settimer 30s` - 30 sec\n`/settimer 1h` - 1 hour\n`/settimer 0` - off", parse_mode="Markdown"); return
+    sec = parse_timer_str(context.args[0])
+    if sec is None: await update.message.reply_text("Galat format! Use: 1m, 5m, 30s, 1h"); return
+    s=get_settings(); s["timer"]=sec; save(SETTINGS_FILE,s)
+    if sec==0: await update.message.reply_text("✅ Timer OFF")
+    else: await update.message.reply_text(f"✅ Timer set {format_timer(sec)}")
+
+async def set_group(update, context):
+    if update.effective_user.id!=ADMIN_ID: return
+    if not context.args:
+        s=get_settings(); st="ON" if s.get("group",True) else "OFF"
+        await update.message.reply_text(f"Group: {st}\nUse: /group on / off", parse_mode="Markdown"); return
+    val=context.args[0].lower(); s=get_settings()
+    if val=="on": s["group"]=True; save(SETTINGS_FILE,s); await update.message.reply_text("✅ Group ON")
+    elif val=="off": s["group"]=False; save(SETTINGS_FILE,s); await update.message.reply_text("✅ Group OFF")
+    else: await update.message.reply_text("Use: /group on / off")
 
 async def add_photo(update, context):
     if update.effective_user.id!=ADMIN_ID: return
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
-        await update.message.reply_text("🖼️ Photo pe reply karke `/add` likho", parse_mode="Markdown")
-        return
+        await update.message.reply_text("Photo pe reply karke:\n`/add` - normal\n`/add 1m` - 1 min timer\n`/add 5m` - 5 min\n`/add 1h` - 1 hour", parse_mode="Markdown"); return
+    sec=None
+    if context.args:
+        sec=parse_timer_str(context.args[0])
     file=await update.message.reply_to_message.photo[-1].get_file()
     await file.download_to_drive(os.path.join(PHOTO_FOLDER, f"{int(time.time())}.jpg"))
-    await update.message.reply_text(f"✅ Added! Total: {len(get_photos())}")
+    s=get_settings()
+    if sec and sec>0:
+        s["timer"]=sec; save(SETTINGS_FILE,s)
+        await update.message.reply_text(f"✅ Added + Timer {format_timer(sec)} set! Total: {len(get_photos())}")
+    else:
+        await update.message.reply_text(f"✅ Added! Total: {len(get_photos())} Timer: {format_timer(s.get('timer',0)) if s.get('timer',0)>0 else 'OFF'}")
 
 async def status(update, context):
     if update.effective_user.id!=ADMIN_ID: return
     s=get_settings()
-    await update.message.reply_text(f"Name:{s['name']}\nCode:{s['code']}\nFont:{s.get('font','normal')}\nPhotos:{len(get_photos())}\nUsers:{len(load(USERS_FILE))}\nBanned:{len(load(BANNED_FILE))}")
+    timer_txt = format_timer(s.get('timer',0)) if s.get('timer',0)>0 else "OFF"
+    await update.message.reply_text(f"Name:{s['name']}\nCode:{s['code']}\nFont:{s['font']}\nTimer:{timer_txt}\nGroup:{'ON' if s['group'] else 'OFF'}\nPhotos:{len(get_photos())}\nUsers:{len(load(USERS_FILE))}")
 
 async def ban(update, context):
     if update.effective_user.id!=ADMIN_ID: return
-    if len(context.args)<1:
-        await update.message.reply_text("🚫 **Ban**\nUse: `/ban ID 1d/2d/perm`\nEx: `/ban 123456 2d`", parse_mode="Markdown")
-        return
+    if len(context.args)<1: await update.message.reply_text("Use: /ban ID 1d/perm", parse_mode="Markdown"); return
     uid=context.args[0]; dur=context.args[1] if len(context.args)>1 else "perm"
     exp=parse_time(dur)
-    if not exp:
-        await update.message.reply_text("Time: 1d, 2d, 7d, 1h, 30m, perm"); return
+    if not exp: await update.message.reply_text("Time: 1d,2d,perm"); return
     b=load(BANNED_FILE); b[uid]=exp; save(BANNED_FILE,b)
-    await update.message.reply_text(f"✅ User {uid} banned for {dur}")
+    await update.message.reply_text(f"✅ Banned {uid} for {dur}")
 
 async def unban(update, context):
     if update.effective_user.id!=ADMIN_ID: return
-    if len(context.args)<1:
-        await update.message.reply_text("♻️ Use: `/unban USER_ID`\nEx: `/unban 123456`", parse_mode="Markdown")
-        return
+    if len(context.args)<1: await update.message.reply_text("Use: /unban ID", parse_mode="Markdown"); return
     b=load(BANNED_FILE); b.pop(context.args[0],None); save(BANNED_FILE,b)
-    await update.message.reply_text(f"✅ User {context.args[0]} unbanned")
+    await update.message.reply_text(f"✅ Unbanned {context.args[0]}")
 
 async def broadcast(update, context):
     if update.effective_user.id!=ADMIN_ID: return
     users = load(USERS_FILE)
     if not context.args and not update.message.reply_to_message:
-        await update.message.reply_text("📢 **Broadcast**\nUse:\n`/broadcast all Hello`\n`/broadcast 12345678 Hello`\nPhoto pe reply karke `/broadcast all` ya `/broadcast ID`", parse_mode="Markdown")
-        return
-
+        await update.message.reply_text("Use: /broadcast all hi or /broadcast ID hi", parse_mode="Markdown"); return
     target = context.args[0].lower() if context.args else "all"
-
-    # Reply case
     if update.message.reply_to_message:
         msg = update.message.reply_to_message
         if target == "all":
-            await update.message.reply_text(f"Broadcasting to {len(users)} users...")
             count=0
             for uid in users.keys():
-                try: await msg.copy(chat_id=int(uid)); count+=1
+                try: await msg.copy(chat_id=int(uid), protect_content=True); count+=1
                 except: pass
-            await update.message.reply_text(f"✅ Done! Sent to {count}")
+            await update.message.reply_text(f"✅ Done {count}")
         else:
-            try:
-                await msg.copy(chat_id=int(target))
-                await update.message.reply_text(f"✅ Sent to {target}")
-            except Exception as e:
-                await update.message.reply_text(f"❌ Failed: {e}")
+            try: await msg.copy(chat_id=int(target), protect_content=True); await update.message.reply_text(f"✅ Sent to {target}")
+            except Exception as e: await update.message.reply_text(f"❌ {e}")
         return
-
-    # Text case
     if target == "all":
         text = " ".join(context.args[1:])
-        if not text:
-            await update.message.reply_text("Use: /broadcast all Your message"); return
-        await update.message.reply_text(f"Broadcasting to {len(users)} users...")
+        if not text: await update.message.reply_text("Msg likh"); return
         count=0
         for uid in users.keys():
-            try: await context.bot.send_message(chat_id=int(uid), text=text); count+=1
+            try: await context.bot.send_message(chat_id=int(uid), text=text, protect_content=True); count+=1
             except: pass
-        await update.message.reply_text(f"✅ Done! Sent to {count}")
+        await update.message.reply_text(f"✅ Done {count}")
     else:
         try:
-            uid = int(target)
-            text = " ".join(context.args[1:])
-            if not text:
-                await update.message.reply_text("Use: /broadcast USER_ID Your message"); return
-            await context.bot.send_message(chat_id=uid, text=text)
+            uid = int(target); text = " ".join(context.args[1:])
+            if not text: await update.message.reply_text("Msg likh"); return
+            await context.bot.send_message(chat_id=uid, text=text, protect_content=True)
             await update.message.reply_text(f"✅ Sent to {uid}")
-        except:
-            await update.message.reply_text("ID galat hai. Use: /broadcast all msg ya /broadcast USER_ID msg")
+        except: await update.message.reply_text("ID galat")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).post_init(setup_commands).build()
@@ -228,6 +261,8 @@ def main():
     app.add_handler(CommandHandler("setcode", set_code))
     app.add_handler(CommandHandler("setinsta", set_insta))
     app.add_handler(CommandHandler("setfont", set_font))
+    app.add_handler(CommandHandler("settimer", set_timer))
+    app.add_handler(CommandHandler("group", set_group))
     app.add_handler(CommandHandler("add", add_photo))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("ban", ban))
