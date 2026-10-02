@@ -1,142 +1,129 @@
-import os, json, threading
+import json, os, time
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from collections import Counter
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-VERIFY_CODE = "6118588149"
-OWNER_NAME = "Khushi"
-OWNER_USERNAME = "myselfkhushi03"
-INSTA_LINK = f"https://instagram.com/{OWNER_USERNAME}"
-ADMIN_IDS = [8536757095] # Tera ID
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-flask_app = Flask(__name__)
-@flask_app.route('/')
-def home(): return "Premium Bot Live - Final V3"
+# Data files
+USERS_FILE = "users.json"
+BANNED_FILE = "banned.json"
 
-VERIFY_FILE = "verified.json"
-USER_FILE = "users.json"
+# Anti-spam memory
+cooldown = {}
 
-try:
-    with open(VERIFY_FILE, "r") as f:
-        verified_users = set(json.load(f))
-except: verified_users = set()
-
-try:
-    with open(USER_FILE, "r") as f:
-        users_data = json.load(f)
-except: users_data = {}
-
-def save_all():
+def load_json(file):
     try:
-        with open(VERIFY_FILE, "w") as f: json.dump(list(verified_users), f)
-        with open(USER_FILE, "w") as f: json.dump(users_data, f)
-    except: pass
+        with open(file, "r") as f:
+            return json.load(f)
+    except: return {}
 
-def save_user(user):
-    uid = str(user.id)
-    if uid not in users_data:
-        users_data[uid] = {
-            "name": user.first_name,
-            "username": f"@{user.username}" if user.username else "No username",
-            "id": user.id,
-            "joined": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %I:%M %p")
+def save_json(file, data):
+    with open(file, "w") as f:
+        json.dump(data, f, indent=2)
+
+# 1. Save user with IST time
+def save_user(user_id, name):
+    users = load_json(USERS_FILE)
+    if str(user_id) not in users:
+        users[str(user_id)] = {
+            "name": name,
+            "joined": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %I:%M %p"),
+            "date": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y"),
+            "photos_seen": 0
         }
-        save_all()
-
-def get_photos():
-    photos = []
-    for folder in [".", "photos"]:
-        if os.path.exists(folder):
-            for file in os.listdir(folder):
-                if file.lower().endswith(('.jpg','.jpeg','.png','.webp')):
-                    path = file if folder == "." else os.path.join(folder, file)
-                    if os.path.isfile(path): photos.append(path)
-    return list(set(photos))
-
-def keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton(f"📷 Follow {OWNER_NAME}", url=INSTA_LINK)]])
+        save_json(USERS_FILE, users)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    save_user(update.effective_user)
     uid = update.effective_user.id
-    user_name = update.effective_user.first_name
-    if uid in verified_users:
-        await update.message.reply_text(f"Hey {user_name} ✨ Welcome back!\nSending your private collection...", reply_markup=keyboard())
-        await send_photos(update, context)
+    banned = load_json(BANNED_FILE)
+    if str(uid) in banned:
+        await update.message.reply_text("❌ You are banned from this bot.")
         return
-    await update.message.reply_text(
-        f"Hey {user_name} ✨\n\nWelcome to {OWNER_NAME}'s private vault 💌\n━━━━━━━━━━━━━━━━━━━━\n\nI'm {OWNER_NAME}, so glad you're here!\n\nYou've found my exclusive collection 📸\nJust one step to unlock.\n\n👤 Your Name: {user_name}\n🆔 Your ID: {uid}\n\n🔐 Send the secret code to unlock\n\n<i>⚠️ Photos are one-time view & can't be forwarded</i>",
-        parse_mode="HTML", reply_markup=keyboard()
-    )
 
-async def send_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        photos = get_photos()
-        if not photos:
-            await update.message.reply_text("Vault is empty right now")
-            return
-        await update.message.reply_text("🔓 Unlocking... Photos will auto-delete in 60 sec ⏳")
-        for i, path in enumerate(photos, 1):
-            try:
-                with open(path, 'rb') as p:
-                    msg = await update.message.reply_photo(
-                        photo=p,
-                        caption=f"For you, {update.effective_user.first_name} 💖 • {i}/{len(photos)}\nFrom: {OWNER_NAME} ✨\n\n⚠️ This will delete in 60s - No Forward Allowed",
-                        reply_markup=keyboard(), has_spoiler=True, protect_content=True
-                    )
-                    context.job_queue.run_once(delete_msg, 60, data={'chat_id': msg.chat_id, 'msg_id': msg.message_id})
-            except: continue
-    except: pass
-
-async def delete_msg(context: ContextTypes.DEFAULT_TYPE):
-    try: await context.bot.delete_message(chat_id=context.job.data['chat_id'], message_id=context.job.data['msg_id'])
-    except: pass
-
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    save_user(update.effective_user)
-    uid = update.effective_user.id
-    text = update.message.text.strip()
-    if uid not in verified_users:
-        if text == VERIFY_CODE:
-            verified_users.add(uid)
-            save_all()
-            await update.message.reply_text(f"Yayy! Access granted ✅\nSending photos from {OWNER_NAME}...")
-            await send_photos(update, context)
-        else:
-            await update.message.reply_text("Oops! Wrong code 🥺 Try again")
+    # Anti-Spam: 5 sec cooldown
+    if uid in cooldown and time.time() - cooldown[uid] < 5:
+        await update.message.reply_text("⏳ Thoda slow bhai, 5 sec ruk ja.")
         return
-    await send_photos(update, context)
+    cooldown[uid] = time.time()
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Admin only")
+    save_user(uid, update.effective_user.username or update.effective_user.first_name)
+
+    # Anti bar-bar same photo - logic
+    users = load_json(USERS_FILE)
+    seen = users[str(uid)].get("photos_seen", 0)
+    users[str(uid)]["photos_seen"] = seen + 1
+    save_json(USERS_FILE, users)
+
+    await update.message.reply_text(f"🔥 Welcome {update.effective_user.first_name}!\nPhoto {seen+1} unlock ho gayi (Demo)")
+
+# ADMIN COMMANDS
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID: return
+    users = load_json(USERS_FILE)
+    await update.message.reply_text(f"📊 Total Users: {len(users)}\nBanned: {len(load_json(BANNED_FILE))}")
+
+async def export_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID: return
+    await update.message.reply_document(document=open(USERS_FILE, "rb"), filename="users.json")
+
+async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID: return
+    await update.message.reply_document(document=open(USERS_FILE, "rb"), caption="Backup ✅")
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID: return
+    if not context.args:
+        await update.message.reply_text("Use: /broadcast message yaha likho")
         return
-    if not users_data:
-        await update.message.reply_text("No users yet")
-        return
-    text = f"📊 <b>Bot Stats - Full Details</b>\n━━━━━━━━━━━━\n👥 Total Verified: {len(verified_users)}\n📸 Total Photos: {len(get_photos())}\n━━━━━━━━━━━━\n\n"
-    for i, (uid, info) in enumerate(users_data.items(), 1):
-        verified = "✅ Verified" if int(uid) in verified_users else "❌ Not Verified"
-        text += f"<b>{i}. {info['name']}</b>\n 👤 Username: {info['username']}\n 🆔 ID: <code>{info['id']}</code>\n 📅 Joined: {info['joined']}\n {verified}\n\n"
-    if len(text) > 4000:
-        for x in range(0, len(text), 4000):
-            await update.message.reply_text(text[x:x+4000], parse_mode="HTML")
-    else:
-        await update.message.reply_text(text, parse_mode="HTML")
+    text = " ".join(context.args)
+    users = load_json(USERS_FILE)
+    sent = 0
+    for uid in users:
+        if uid in load_json(BANNED_FILE): continue
+        try:
+            await context.bot.send_message(int(uid), text)
+            sent += 1
+        except: pass
+    await update.message.reply_text(f"Broadcast {sent} users ko bhej diya ✅")
 
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID: return
+    if not context.args: return
+    banned = load_json(BANNED_FILE)
+    banned[context.args[0]] = True
+    save_json(BANNED_FILE, banned)
+    await update.message.reply_text(f"User {context.args[0]} banned ✅")
 
-if __name__ == '__main__':
-    threading.Thread(target=run_flask, daemon=True).start()
-    print(f"Photos found: {get_photos()}")
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("status", stats))
-    app.add_handler(CommandHandler("users", stats))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    app.run_polling(drop_pending_updates=True)
+async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID: return
+    banned = load_json(BANNED_FILE)
+    if context.args[0] in banned:
+        del banned[context.args[0]]
+        save_json(BANNED_FILE, banned)
+    await update.message.reply_text(f"User {context.args[0]} unbanned ✅")
+
+async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID: return
+    users = load_json(USERS_FILE)
+    dates = [v.get("date","") for v in users.values()]
+    c = Counter(dates)
+    msg = "📈 Last 7 days chart:\n\n"
+    for d, count in list(c.items())[-7:]:
+        msg += f"{d}: {'█'*count} ({count})\n"
+    await update.message.reply_text(msg)
+
+app = Application.builder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("status", status))
+app.add_handler(CommandHandler("export", export_users))
+app.add_handler(CommandHandler("backup", backup))
+app.add_handler(CommandHandler("broadcast", broadcast))
+app.add_handler(CommandHandler("ban", ban))
+app.add_handler(CommandHandler("unban", unban))
+app.add_handler(CommandHandler("chart", chart))
+app.run_polling()
