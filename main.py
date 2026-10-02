@@ -1,9 +1,8 @@
-import os, json, time, random, datetime
+import os, json, time, datetime
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.constants import ParseMode
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
@@ -40,13 +39,16 @@ DEFAULT_SETTINGS = {
 def get_settings():
     s=load(SETTINGS_FILE)
     if not s: s=DEFAULT_SETTINGS.copy(); save(SETTINGS_FILE,s)
-    s.setdefault("protect", True); return s
+    s.setdefault("protect", True)
+    return s
 
 def load_admins():
     admins = load(ADMINS_FILE)
     if not admins or "list" not in admins:
-        admins = {"master": ADMIN_ID, "list": [ADMIN_ID] if ADMIN_ID!=0 else []}; save(ADMINS_FILE, admins)
-    if ADMIN_ID!=0 and ADMIN_ID not in admins["list"]: admins["list"].append(ADMIN_ID); save(ADMINS_FILE, admins)
+        admins = {"master": ADMIN_ID, "list": [ADMIN_ID] if ADMIN_ID!=0 else []}
+        save(ADMINS_FILE, admins)
+    if ADMIN_ID!=0 and ADMIN_ID not in admins["list"]:
+        admins["list"].append(ADMIN_ID); save(ADMINS_FILE, admins)
     return admins
 
 def is_admin(uid): return uid in load_admins().get("list", [])
@@ -55,22 +57,17 @@ def is_master(uid): return uid == ADMIN_ID
 def premium_box(title, lines):
     box = f"📦 {title}\n━━━━━━━━━━━━━━━━━━\n"
     for l in lines: box += f"{l}\n"
-    box += "━━━━━━━━━━━━━━━━━━"; return box
+    box += "━━━━━━━━━━━━━━━━━━"
+    return box
 
-async def send_welcome_preview(chat_id, bot):
-    s=get_settings()
-    preview = s["welcome"].replace("{user}","TestUser").replace("{name}",s["name"]).replace("{id}","123456789")
-    btn=[[InlineKeyboardButton(f"📸 Follow {s['name']}", url=s["insta"])]]
-    try: await bot.send_message(chat_id=chat_id, text=f"👁️ Preview:\n\n{preview}", reply_markup=InlineKeyboardMarkup(btn), protect_content=s.get("protect", True))
-    except: await bot.send_message(chat_id=chat_id, text=preview, reply_markup=InlineKeyboardMarkup(btn), protect_content=s.get("protect", True))
+def get_photos():
+    return [os.path.join(PHOTO_FOLDER,x) for x in os.listdir(PHOTO_FOLDER) if x.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
 
-SMALL_MAP = {'A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'ǫ','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ','a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'ǫ','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ'}
-def apply_font(t, f): return "".join(SMALL_MAP.get(c,c) for c in t) if f=="small" else t
-def get_photos(): return [os.path.join(PHOTO_FOLDER,x) for x in os.listdir(PHOTO_FOLDER) if x.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
 def is_banned(uid):
     b=load(BANNED_FILE)
     if str(uid) not in b: return False
     return True if b[str(uid)]=="perm" else time.time() < b[str(uid)]
+
 def parse_time(t):
     if t in ["perm","permanent"]: return "perm"
     try:
@@ -79,244 +76,157 @@ def parse_time(t):
         if unit=="h": return time.time()+num*3600
         if unit=="d": return time.time()+num*86400
     except: return None
-def parse_timer_str(s):
-    s=s.lower().strip()
-    if s in ["0","off"]: return 0
-    try:
-        if s[-1]=="s": return max(5,int(s[:-1]))
-        if s[-1]=="m": return int(s[:-1])*60
-        if s[-1]=="h": return int(s[:-1])*3600
-        return int(s)*60
-    except: return None
-def format_timer(sec):
-    if sec==0: return "OFF"
-    if sec<60: return f"{sec}s"
-    if sec<3600: return f"{sec//60}m"
-    return f"{sec//3600}h"
+
 async def delete_job(context):
     try: await context.bot.delete_message(chat_id=context.job.chat_id, message_id=context.job.data)
     except: pass
-        async def refresh_commands_for_admin(bot, admin_id, is_master_user=False):
-    cmds=[BotCommand("start","🚀 Start"),BotCommand("info","👤 Info"),BotCommand("status","📊 Status"),BotCommand("users","👥 Users"),BotCommand("admins","👑 Admins"),BotCommand("setname","✏️ Name"),BotCommand("setcode","🔐 Code"),BotCommand("setinsta","🔗 Insta"),BotCommand("setfont","🔤 Font"),BotCommand("settime","⏱️ Timer"),BotCommand("add","📸 Add (5 max)"),BotCommand("clearphotos","🗑️ Clear all"),BotCommand("group","🌐 Group"),BotCommand("broadcast","📢 Broadcast")]
+
+# --- YE NAYA FUNCTION HAI MASTER KO NOTIFY KARNE KE LIYE ---
+async def notify_master(context, admin_user, action, extra_lines):
+    if admin_user.id == ADMIN_ID: return
+    try:
+        lines = [
+            f"👤 Admin: {admin_user.first_name}",
+            f"🆔 ID: {admin_user.id}",
+            f"🔗 Username: @{admin_user.username or 'N/A'}",
+            f"⚡ Action: {action}",
+        ] + extra_lines
+        await context.bot.send_message(chat_id=ADMIN_ID, text=premium_box("Admin Activity Log", lines))
+    except: pass
+
+async def refresh_commands_for_admin(bot, admin_id, is_master_user=False):
+    cmds=[
+        BotCommand("start","🚀 Start"),
+        BotCommand("status","📊 Status"),
+        BotCommand("setname","✏️ Name"),
+        BotCommand("setcode","🔐 Code"),
+        BotCommand("setinsta","🔗 Insta"),
+        BotCommand("add","📸 Add 5 max"),
+        BotCommand("clearphotos","🗑️ Clear all"),
+    ]
     if is_master_user or admin_id==ADMIN_ID:
-        cmds.extend([BotCommand("ban","🚫 Ban"),BotCommand("unban","✅ Unban"),BotCommand("addadmin","➕ Add admin"),BotCommand("removeadmin","➖ Remove admin"),BotCommand("protect","🔒 Protect"),BotCommand("reset","♻️ Reset")])
+        cmds.extend([BotCommand("ban","🚫 Ban"),BotCommand("unban","✅ Unban"),BotCommand("addadmin","➕ Add admin"),BotCommand("removeadmin","➖ Remove admin")])
     try: await bot.set_my_commands(cmds, scope=BotCommandScopeChat(chat_id=admin_id))
     except: pass
 
 async def setup_commands(app):
     await app.bot.set_my_commands([BotCommand("start","🚀 Start bot"),BotCommand("admin","📩 Contact admin")], scope=BotCommandScopeDefault())
-    for aid in load_admins().get("list", []): await refresh_commands_for_admin(app.bot, aid, is_master_user=(aid==ADMIN_ID))
+    for aid in load_admins().get("list", []):
+        await refresh_commands_for_admin(app.bot, aid, is_master_user=(aid==ADMIN_ID))
 
 async def start(update, context):
     s=get_settings()
     if is_banned(update.effective_user.id): return
     uid=str(update.effective_user.id); users=load(USERS_FILE)
-    username = update.effective_user.username or "N/A"
     if uid not in users:
-        users[uid]={"name":update.effective_user.first_name, "username": username, "joined": datetime.datetime.now().strftime("%d-%m-%Y %H:%M"), "verified": False}; save(USERS_FILE,users)
-    welcome=apply_font(s["welcome"].replace("{user}",update.effective_user.first_name).replace("{name}",s["name"]).replace("{id}",str(uid)), s.get("font","normal"))
+        users[uid]={"name":update.effective_user.first_name, "username": update.effective_user.username or "N/A", "joined": datetime.datetime.now().strftime("%d-%m-%Y %H:%M"), "verified": False}
+        save(USERS_FILE,users)
+    welcome=s["welcome"].replace("{user}",update.effective_user.first_name).replace("{name}",s["name"]).replace("{id}",str(uid))
     btn=[[InlineKeyboardButton(f"📸 Follow {s['name']}", url=s["insta"])]]
     await update.message.reply_text(welcome, reply_markup=InlineKeyboardMarkup(btn), protect_content=s.get("protect", True))
 
 async def check_code(update, context):
     if update.effective_user.id in PENDING_ADMIN_MSG:
-        user_msg = update.message.text; user = update.effective_user
         PENDING_ADMIN_MSG.pop(update.effective_user.id, None)
         for aid in load_admins().get("list", []):
-            try: await context.bot.send_message(chat_id=aid, text=f"📩 New Msg\n👤 {user.first_name}\n🆔 {user.id}\n💬 {user_msg}")
+            try: await context.bot.send_message(chat_id=aid, text=f"📩 New Msg\n👤 {update.effective_user.first_name}\n🆔 {update.effective_user.id}\n💬 {update.message.text}")
             except: pass
-        await update.message.reply_text("✅ Message sent to admins 💌"); return
+        await update.message.reply_text("✅ Message sent to admins 💌")
+        return
     s=get_settings()
     if is_banned(update.effective_user.id): return
     if update.message.text.strip()!=s["code"]: return
     all_photos=get_photos()
-    if len(all_photos)==0: await update.message.reply_text("📭 No photos yet!", protect_content=s.get("protect", True)); return
-    uid=str(update.effective_user.id); users=load(USERS_FILE)
-    if uid in users: users[uid]["verified"]=True; save(USERS_FILE,users)
-    timer_sec=s.get("timer",0)
-    # AB SAARE PHOTOS EK SATH BHEJEGA
-    total = len(all_photos)
+    if len(all_photos)==0:
+        await update.message.reply_text("📭 No photos yet!", protect_content=s.get("protect", True))
+        return
+    total=len(all_photos)
     await update.message.reply_text(f"✨ Access Granted! 💎 Sending {total} photos...", protect_content=s.get("protect", True))
     for i, p in enumerate(all_photos, 1):
-        # SS jaisa caption
-        cap = f"For you, {update.effective_user.first_name} 💖 • {i}/{total}\nFrom: {s['name']} ✨"
-        cap = apply_font(cap, s.get("font","normal"))
-        btn = [[InlineKeyboardButton(f"📸 Follow {s['name']}", url=s["insta"])]]
-        sent = await update.message.reply_photo(open(p,"rb"), caption=cap, reply_markup=InlineKeyboardMarkup(btn), protect_content=s.get("protect", True))
-        if timer_sec>0 and context.job_queue: context.job_queue.run_once(delete_job, timer_sec, chat_id=update.effective_chat.id, data=sent.message_id)
-
-async def info_cmd(update, context):
-    if not is_admin(update.effective_user.id): return
-    target_id = int(context.args[0]) if context.args else update.effective_user.id
-    users = load(USERS_FILE); data = users.get(str(target_id), {"name": update.effective_user.first_name, "username": "N/A"})
-    await update.message.reply_text(premium_box("User Info", [f"👤 Name: {data.get('name')}", f"🆔 ID: {target_id}", f"🔗 Username: @{data.get('username')}"]))
-
-async def admin_contact(update, context):
-    if is_banned(update.effective_user.id): return
-    if context.args:
-        user_msg = " ".join(context.args)
-        for aid in load_admins().get("list", []):
-            try: await context.bot.send_message(chat_id=aid, text=premium_box("New User Message", [f"👤 {update.effective_user.first_name}", f"🆔 {update.effective_user.id}", f"💬 {user_msg}"]))
-            except: pass
-        await update.message.reply_text(premium_box("Success", ["✅ Sent to admins 💌"]))
-    else: PENDING_ADMIN_MSG[update.effective_user.id] = True; await update.message.reply_text(premium_box("Contact Admin", ["✍️ Send your message now"]))
-
-async def protect_cmd(update, context):
-    if not is_master(update.effective_user.id): await update.message.reply_text(premium_box("Error", ["❌ Only Master"])); return
-    if not context.args: return
-    s=get_settings()
-    if context.args[0].lower()=="on": s["protect"]=True; save(SETTINGS_FILE,s); await update.message.reply_text(premium_box("Updated", ["🔒 ON ✅"])); await send_welcome_preview(update.effective_chat.id, context.bot)
-    else: s["protect"]=False; save(SETTINGS_FILE,s); await update.message.reply_text(premium_box("Updated", ["🔓 OFF ✅"])); await send_welcome_preview(update.effective_chat.id, context.bot)
+        cap=f"For you, {update.effective_user.first_name} 💖 • {i}/{total}\nFrom: {s['name']} ✨"
+        btn=[[InlineKeyboardButton(f"📸 Follow {s['name']}", url=s["insta"])]]
+        await update.message.reply_photo(open(p,"rb"), caption=cap, reply_markup=InlineKeyboardMarkup(btn), protect_content=s.get("protect", True))
 
 async def status(update, context):
     if not is_admin(update.effective_user.id): return
-    s=get_settings(); users=load(USERS_FILE); banned=load(BANNED_FILE)
-    prot="ON 🔒" if s.get("protect",True) else "OFF 🔓"
-    await update.message.reply_text(premium_box("Bot Status", [f"👑 {s['name']}", f"🔐 {s['code']}", f"🔒 {prot}", f"📸 {len(get_photos())}/{MAX_PHOTOS}", f"👥 {len(users)}", f"🚫 {len(banned)}"]))
+    s=get_settings()
+    await update.message.reply_text(premium_box("Bot Status", [f"👑 {s['name']}", f"📸 {len(get_photos())}/{MAX_PHOTOS}"]))
 
-async def users_list(update, context):
+async def add_photo(update, context):
     if not is_admin(update.effective_user.id): return
-    users=load(USERS_FILE); msg=f"📊 Users: {len(users)}\n\n"
-    for idx, (uid, data) in enumerate(users.items(),1):
-        msg+=f"{idx}. {data.get('name')} ID:{uid}\n"
-        if len(msg)>3500: await update.message.reply_text(msg); msg=""
-    if msg: await update.message.reply_text(msg)
+    if not update.message.reply_to_message or not update.message.reply_to_message.photo:
+        await update.message.reply_text(f"📸 Reply to a photo with /add")
+        return
+    current=len(get_photos())
+    if current>=MAX_PHOTOS:
+        await update.message.reply_text(premium_box("Limit Reached", [f"❌ Max {MAX_PHOTOS} allowed", f"Use /clearphotos"]))
+        return
+    file=await update.message.reply_to_message.photo[-1].get_file()
+    path=os.path.join(PHOTO_FOLDER, f"{int(time.time()*1000)}.jpg")
+    await file.download_to_drive(path)
+    await update.message.reply_text(premium_box("Photo Added - Premium", [f"✅ Added: {current+1}/{MAX_PHOTOS}"]))
+    await notify_master(context, update.effective_user, "Photo Added", [f"📸 Total Now: {current+1}/{MAX_PHOTOS}"])
 
-async def add_admin(update, context):
-    if not is_master(update.effective_user.id): return
-    if not context.args: return
-    new_id=int(context.args[0]); admins=load_admins()
-    if new_id not in admins["list"]: admins["list"].append(new_id); save(ADMINS_FILE, admins); await refresh_commands_for_admin(context.bot, new_id, False)
-    await update.message.reply_text(premium_box("Admin Added", [f"✅ {new_id} is now admin"]))
-
-async def remove_admin(update, context):
-    if not is_master(update.effective_user.id): return
-    if not context.args: return
-    rem_id=int(context.args[0])
-    if rem_id==ADMIN_ID: return
-    admins=load_admins()
-    if rem_id in admins["list"]: admins["list"].remove(rem_id); save(ADMINS_FILE, admins)
-    await update.message.reply_text(premium_box("Removed", [f"✅ {rem_id} removed"]))
-
-async def admins_list(update, context):
+async def clear_photos(update, context):
     if not is_admin(update.effective_user.id): return
-    admins=load_admins(); users=load(USERS_FILE); lines=[]
-    for i, uid in enumerate(admins["list"],1):
-        data=users.get(str(uid),{"name":"Unknown"}); lines.append(f"{i}. {data['name']} ID:{uid}")
-    await update.message.reply_text(premium_box("Admins List", lines))
-
-async def reset_bot(update, context):
-    if not is_master(update.effective_user.id): return
-    save(SETTINGS_FILE, DEFAULT_SETTINGS.copy())
-    await update.message.reply_text(premium_box("Reset", ["♻️ Reset done ✅"]))
+    photos=get_photos()
+    if not photos:
+        await update.message.reply_text("📭 No photos")
+        return
+    for p in photos:
+        try: os.remove(p)
+        except: pass
+    await update.message.reply_text(premium_box("Photos Cleared", [f"🗑️ {len(photos)} deleted ✅"]))
+    await notify_master(context, update.effective_user, "Clear Photos", [f"🗑️ Deleted: {len(photos)} photos", f"Now: 0/{MAX_PHOTOS}"])
 
 async def set_name(update, context):
     if not is_admin(update.effective_user.id): return
     if not context.args: return
-    s=get_settings(); s["name"]=" ".join(context.args); save(SETTINGS_FILE,s)
-    await update.message.reply_text(premium_box("Updated", [f"Name: {s['name']}"])); await send_welcome_preview(update.effective_chat.id, context.bot)
+    new_name=" ".join(context.args)
+    s=get_settings(); old=s["name"]; s["name"]=new_name; save(SETTINGS_FILE,s)
+    await update.message.reply_text(premium_box("Updated", [f"Name: {new_name}"]))
+    await notify_master(context, update.effective_user, "Set Name", [f"Old: {old}", f"New: {new_name}"])
 
 async def set_code(update, context):
     if not is_admin(update.effective_user.id): return
     if not context.args: return
-    s=get_settings(); s["code"]=context.args[0]; save(SETTINGS_FILE,s)
+    s=get_settings(); old=s["code"]; s["code"]=context.args[0]; save(SETTINGS_FILE,s)
     await update.message.reply_text(premium_box("Updated", [f"Code: {s['code']}"]))
+    await notify_master(context, update.effective_user, "Set Code", [f"Old: {old}", f"New: {s['code']}"])
 
 async def set_insta(update, context):
     if not is_admin(update.effective_user.id): return
     if not context.args: return
     raw=context.args[0].replace("@",""); link=raw if "http" in raw else f"https://www.instagram.com/{raw.split('/')[-1]}"
-    s=get_settings(); s["insta"]=link; save(SETTINGS_FILE,s)
-    await update.message.reply_text(premium_box("Updated", ["Insta set ✅"])); await send_welcome_preview(update.effective_chat.id, context.bot)
-
-async def set_font(update, context):
-    if not is_admin(update.effective_user.id): return
-    if not context.args: return
-    s=get_settings(); s["font"]=context.args[0].lower(); save(SETTINGS_FILE,s)
-    await update.message.reply_text(premium_box("Updated", [f"Font: {s['font']}"])); await send_welcome_preview(update.effective_chat.id, context.bot)
-
-async def set_timer(update, context):
-    if not is_admin(update.effective_user.id): return
-    if not context.args: return
-    sec=parse_timer_str(context.args[0])
-    if sec is None: return
-    s=get_settings(); s["timer"]=sec; save(SETTINGS_FILE,s)
-    await update.message.reply_text(premium_box("Timer Set", [f"Timer: {format_timer(sec)} ✅"]))
-
-async def set_group(update, context):
-    if not is_admin(update.effective_user.id): return
-    if not context.args: return
-    s=get_settings(); s["group"]=context.args[0].lower()=="on"; save(SETTINGS_FILE,s)
-    await update.message.reply_text(premium_box("Group Updated", [f"{'enabled ✅' if s['group'] else 'disabled ❌'}"]))
-
-async def add_photo(update, context):
-    if not is_admin(update.effective_user.id): return
-    if not update.message.reply_to_message or not update.message.reply_to_message.photo:
-        await update.message.reply_text(f"📸 Reply to a photo with /add\nLimit: {MAX_PHOTOS}"); return
-    current = len(get_photos())
-    if current >= MAX_PHOTOS:
-        await update.message.reply_text(premium_box("Limit Reached", [f"❌ Max {MAX_PHOTOS} photos allowed", f"Current: {current}/{MAX_PHOTOS}", f"Use /clearphotos to clear"])); return
-    file=await update.message.reply_to_message.photo[-1].get_file()
-    path=os.path.join(PHOTO_FOLDER, f"{int(time.time()*1000)}.jpg")
-    await file.download_to_drive(path)
-    await update.message.reply_text(premium_box("Photo Added - Premium", [f"✅ Added: {current+1}/{MAX_PHOTOS}", f"Remaining: {MAX_PHOTOS-(current+1)}"]))
-
-async def clear_photos(update, context):
-    if not is_admin(update.effective_user.id): return
-    photos=get_photos()
-    if not photos: await update.message.reply_text("📭 No photos"); return
-    for p in photos:
-        try: os.remove(p)
-        except: pass
-    await update.message.reply_text(premium_box("Photos Cleared", [f"🗑️ {len(photos)} deleted ✅", f"Now: 0/{MAX_PHOTOS}"]))
+    s=get_settings(); old=s["insta"]; s["insta"]=link; save(SETTINGS_FILE,s)
+    await update.message.reply_text(premium_box("Updated", ["Insta set ✅"]))
+    await notify_master(context, update.effective_user, "Set Insta", [f"Old: {old}", f"New: {link}"])
 
 async def ban(update, context):
-    if not is_master(update.effective_user.id): await update.message.reply_text(premium_box("Error", ["❌ Only Master can ban"])); return
+    if not is_master(update.effective_user.id): return
     if not context.args: return
-    target_id=int(context.args[0])
-    if target_id==ADMIN_ID: await update.message.reply_text(premium_box("Error", ["❌ Cannot ban Master"])); return
-    dur=context.args[1] if len(context.args)>1 else "perm"
-    b=load(BANNED_FILE); b[str(target_id)]=parse_time(dur); save(BANNED_FILE,b)
-    await update.message.reply_text(premium_box("Banned", [f"🚫 {target_id} banned {dur} ✅"]))
+    b=load(BANNED_FILE); b[str(context.args[0])]=parse_time(context.args[1] if len(context.args)>1 else "perm"); save(BANNED_FILE,b)
+    await update.message.reply_text(premium_box("Banned", [f"🚫 {context.args[0]} banned ✅"]))
 
 async def unban(update, context):
-    if not is_master(update.effective_user.id): await update.message.reply_text(premium_box("Error", ["❌ Only Master can unban"])); return
+    if not is_master(update.effective_user.id): return
     if not context.args: return
     b=load(BANNED_FILE); b.pop(context.args[0],None); save(BANNED_FILE,b)
     await update.message.reply_text(premium_box("Unbanned", [f"✅ {context.args[0]} unbanned"]))
 
-async def broadcast(update, context):
-    if not is_admin(update.effective_user.id): return
-    users=load(USERS_FILE); s=get_settings()
-    if update.message.reply_to_message:
-        c=0
-        for uid in users:
-            try: await update.message.reply_to_message.copy(chat_id=int(uid), protect_content=s.get("protect", True)); c+=1
-            except: pass
-        await update.message.reply_text(premium_box("Broadcast", [f"Sent to {c} users ✅"]))
-    else:
-        if not context.args: return
-        text=" ".join(context.args[1:]) if context.args[0].lower()=="all" else " ".join(context.args)
-        c=0
-        for uid in users:
-            try: await context.bot.send_message(chat_id=int(uid), text=text, protect_content=s.get("protect", True)); c+=1
-            except: pass
-        await update.message.reply_text(premium_box("Broadcast", [f"Sent to {c} users ✅"]))
-
 def main():
     app=Application.builder().token(BOT_TOKEN).post_init(setup_commands).build()
-    app.add_handler(CommandHandler("start", start)); app.add_handler(CommandHandler("info", info_cmd))
-    app.add_handler(CommandHandler("admin", admin_contact)); app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("users", users_list)); app.add_handler(CommandHandler("admins", admins_list))
-    app.add_handler(CommandHandler("addadmin", add_admin)); app.add_handler(CommandHandler("removeadmin", remove_admin))
-    app.add_handler(CommandHandler("protect", protect_cmd)); app.add_handler(CommandHandler("setname", set_name))
-    app.add_handler(CommandHandler("setcode", set_code)); app.add_handler(CommandHandler("setinsta", set_insta))
-    app.add_handler(CommandHandler("setfont", set_font)); app.add_handler(CommandHandler("settimer", set_timer))
-    app.add_handler(CommandHandler("settime", set_timer)); app.add_handler(CommandHandler("group", set_group))
-    app.add_handler(CommandHandler("add", add_photo)); app.add_handler(CommandHandler("clearphotos", clear_photos))
-    app.add_handler(CommandHandler("reset", reset_bot)); app.add_handler(CommandHandler("ban", ban))
-    app.add_handler(CommandHandler("unban", unban)); app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("add", add_photo))
+    app.add_handler(CommandHandler("clearphotos", clear_photos))
+    app.add_handler(CommandHandler("setname", set_name))
+    app.add_handler(CommandHandler("setcode", set_code))
+    app.add_handler(CommandHandler("setinsta", set_insta))
+    app.add_handler(CommandHandler("ban", ban))
+    app.add_handler(CommandHandler("unban", unban))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_code))
-    print(f"Bot started - Max {MAX_PHOTOS} photos, all send mode"); app.run_polling(drop_pending_updates=True)
+    print("Bot started with Master Log")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__=="__main__": main()
