@@ -1,17 +1,25 @@
 import json, os, time, random, asyncio
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
+# --- KEEP ALIVE FOR RENDER FREE WEB SERVICE ---
+web = Flask(__name__)
+@web.route('/')
+def home(): return "Bot is Alive @im_chikuuRobot - OK"
+def run_web(): web.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+Thread(target=run_web, daemon=True).start()
+
+# --- CONFIG ---
 MAIN_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 USERS_FILE="users.json"; BANNED_FILE="banned.json"; SETTINGS_FILE="settings.json"; CLONES_FILE="clones.json"
 PHOTO_FOLDER="photos"; os.makedirs(PHOTO_FOLDER, exist_ok=True)
 
-# --- COPYRIGHT ---
 COPYRIGHT = "© @im_chikuuRobot"
 
-# --- ENGLISH WELCOME (Same as your screenshot) ---
 DEFAULT_WELCOME = """Hey {user} ✨
 
 Welcome to {name}'s private vault 💌
@@ -64,14 +72,12 @@ def is_banned(uid):
         b.pop(str(uid)); save(BANNED_FILE,b); return False
     return True
 
-# --- USER ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_banned(update.effective_user.id): return
     s=get_settings(); uid=str(update.effective_user.id)
     users=load(USERS_FILE)
     if uid not in users:
         users[uid]={"name":update.effective_user.first_name,"seen":[]}; save(USERS_FILE,users)
-
     welcome = s["welcome"].replace("{user}", update.effective_user.first_name).replace("{name}", s["name"]).replace("{id}", str(update.effective_user.id))
     welcome = f"{welcome}\n\n{COPYRIGHT}"
     btn = [[InlineKeyboardButton(f"📷 Follow {s['name']}", url=s["insta"])]]
@@ -85,17 +91,15 @@ async def check_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_photos=get_photos(); seen=users.get(uid,{}).get("seen",[])
         available=[p for p in all_photos if p not in seen]
         if not available: available=all_photos; seen=[]
-        if not available:
-            await update.message.reply_text("No photos added yet."); return
-        photo=random.choice(available); seen.append(photo)
-        users[uid]["seen"]=seen; save(USERS_FILE,users)
+        if not available: await update.message.reply_text("No photos added yet."); return
+        photo=random.choice(available); seen.append(photo); users[uid]["seen"]=seen; save(USERS_FILE,users)
         await update.message.reply_text(f"{SUCCESS_MSG.replace('{name}', s['name'])}\n\n{COPYRIGHT}")
         await update.message.reply_photo(photo=open(photo,"rb"))
     else:
         if txt.isdigit() and len(txt)>=4:
             await update.message.reply_text(f"{WRONG_MSG}\n\n{COPYRIGHT}")
 
-# --- ADMIN ONLY ---
+# ADMIN ONLY
 async def set_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
     s=get_settings(); s["name"]=" ".join(context.args); save(SETTINGS_FILE,s)
@@ -103,64 +107,42 @@ async def set_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_insta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
     s=get_settings(); s["insta"]=context.args[0]; save(SETTINGS_FILE,s)
-    await update.message.reply_text("Insta link changed ✅")
+    await update.message.reply_text("Insta changed ✅")
 async def set_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
     s=get_settings(); s["code"]=context.args[0]; save(SETTINGS_FILE,s)
-    await update.message.reply_text(f"Code changed -> {s['code']} ✅")
+    await update.message.reply_text(f"Code -> {s['code']} ✅")
 async def set_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
     s=get_settings()
-    if not context.args:
-        await update.message.reply_text("Use: /setwelcome default or /setwelcome Your message"); return
+    if not context.args: await update.message.reply_text("Use: /setwelcome default"); return
     if context.args[0].lower()=="default":
-        s["welcome"]=DEFAULT_WELCOME; save(SETTINGS_FILE,s)
-        await update.message.reply_text("Welcome set to default ✅"); return
-    s["welcome"]=" ".join(context.args); save(SETTINGS_FILE,s)
-    await update.message.reply_text("Custom welcome set ✅")
+        s["welcome"]=DEFAULT_WELCOME; save(SETTINGS_FILE,s); await update.message.reply_text("Default welcome set ✅"); return
+    s["welcome"]=" ".join(context.args); save(SETTINGS_FILE,s); await update.message.reply_text("Custom welcome set ✅")
 async def add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
-        await update.message.reply_text("Reply to a photo with /add"); return
+        await update.message.reply_text("Reply to photo with /add"); return
     file=await update.message.reply_to_message.photo[-1].get_file()
     await file.download_to_drive(os.path.join(PHOTO_FOLDER, f"{int(time.time())}.jpg"))
-    await update.message.reply_text(f"Photo added ✅ Total: {len(get_photos())}")
+    await update.message.reply_text(f"Added ✅ Total {len(get_photos())}")
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
-    if len(context.args)<1: await update.message.reply_text("Use: /ban user_id 1d/2d/perm"); return
     exp=parse_time(context.args[1] if len(context.args)>1 else "perm")
-    b=load(BANNED_FILE); b[context.args[0]]=exp; save(BANNED_FILE,b)
-    await update.message.reply_text(f"Banned for {context.args[1] if len(context.args)>1 else 'perm'} ✅")
+    b=load(BANNED_FILE); b[context.args[0]]=exp; save(BANNED_FILE,b); await update.message.reply_text("Banned ✅")
 async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
-    b=load(BANNED_FILE); b.pop(context.args[0],None); save(BANNED_FILE,b)
-    await update.message.reply_text("Unbanned ✅")
+    b=load(BANNED_FILE); b.pop(context.args[0],None); save(BANNED_FILE,b); await update.message.reply_text("Unbanned ✅")
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
-    s=get_settings()
-    await update.message.reply_text(f"👧 Name: {s['name']}\n🔑 Code: {s['code']}\n🔗 Insta: {s['insta']}\n🖼 Photos: {len(get_photos())}\n👥 Users: {len(load(USERS_FILE))}\n🚫 Banned: {len(load(BANNED_FILE))}\n\n{COPYRIGHT}")
+    s=get_settings(); await update.message.reply_text(f"Name:{s['name']}\nCode:{s['code']}\nPhotos:{len(get_photos())}\nUsers:{len(load(USERS_FILE))}\n\n{COPYRIGHT}")
 async def clone_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id!=ADMIN_ID: return
-    if not context.args: await update.message.reply_text("Use: /clone BOT_TOKEN"); return
     clones=load(CLONES_FILE); clones[context.args[0]]=True; save(CLONES_FILE,clones)
-    asyncio.create_task(run_bot(context.args[0]))
-    await update.message.reply_text(f"New bot cloned ✅\n{COPYRIGHT}")
+    asyncio.create_task(run_bot(context.args[0])); await update.message.reply_text(f"Cloned ✅\n{COPYRIGHT}")
 
 def get_handlers():
-    return [
-        CommandHandler("start", start),
-        CommandHandler("setname", set_name),
-        CommandHandler("setinsta", set_insta),
-        CommandHandler("setcode", set_code),
-        CommandHandler("setwelcome", set_welcome),
-        CommandHandler("add", add_photo),
-        CommandHandler("status", status),
-        CommandHandler("photos", status),
-        CommandHandler("ban", ban),
-        CommandHandler("unban", unban),
-        CommandHandler("clone", clone_bot),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, check_code)
-    ]
+    return [CommandHandler("start",start),CommandHandler("setname",set_name),CommandHandler("setinsta",set_insta),CommandHandler("setcode",set_code),CommandHandler("setwelcome",set_welcome),CommandHandler("add",add_photo),CommandHandler("status",status),CommandHandler("photos",status),CommandHandler("ban",ban),CommandHandler("unban",unban),CommandHandler("clone",clone_bot),MessageHandler(filters.TEXT & ~filters.COMMAND, check_code)]
 
 async def run_bot(token):
     app=Application.builder().token(token).build()
@@ -174,5 +156,4 @@ async def main():
     await app.initialize(); await app.start(); await app.updater.start_polling()
     await asyncio.Event().wait()
 
-if __name__=="__main__":
-    asyncio.run(main())
+if __name__=="__main__": asyncio.run(main())
