@@ -1,5 +1,6 @@
 import os, json, threading
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -41,7 +42,7 @@ def save_user(user):
             "name": user.first_name,
             "username": f"@{user.username}" if user.username else "No username",
             "id": user.id,
-            "joined": datetime.now().strftime("%d-%m-%Y %H:%M")
+            "joined": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %I:%M %p")
         }
         save_all()
 
