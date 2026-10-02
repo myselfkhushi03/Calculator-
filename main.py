@@ -34,7 +34,7 @@ DEFAULT_SETTINGS = {
     "insta":"https://www.instagram.com/myselfkhushi03",
     "code":"6118588149",
     "font":"normal","timer":0,"group":True,"protect": True,
-    "welcome":"Hey {user} 💖💖💖 ✨\n\nWelcome to {name}'s private vault 💌\n--------------------------------------------\n\nI'm {name}, so glad you're here!\n\nYou've found my exclusive collection 📸\nJust one step to unlock.\n\n👤 Your Name: {user}\n🆔 Your ID: {id}\n\n🔐 Send the secret code to unlock"
+    "welcome":"Hey {user} ✨\n\nWelcome to {name}'s private vault 💌\n--------------------------------------------\n\nI'm {name}, so glad you're here!\n\nYou've found my exclusive collection 📸\nJust one step to unlock.\n\n👤 Your Name: {user}\n🆔 Your ID: {id}\n\n🔐 Send the secret code to unlock"
 }
 def get_settings():
     s=load(SETTINGS_FILE)
